@@ -5,10 +5,12 @@ import tkinter as tk
 import customtkinter as ctk
 import threading
 import dropbox
+import pytz
 from datetime import datetime
 from tkinter import filedialog, simpledialog, messagebox
 from tkcalendar import DateEntry
 from config.dropbox_config import get_dropbox_client
+from upload_to_slack import send_db_to_slack
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
@@ -125,15 +127,16 @@ def insert_rows(df, target_county, target_state, received_from, date_received, p
     conn.close()
 
 # ---------------- DROPBOX UPLOAD ----------------
-def upload_db_to_dropbox(local_db_path, dropbox_folder="/uw_received_offers_tracker"):
+def upload_db_to_dropbox(local_db_path, dropbox_folder="/uw_received_offers_tracker", timestamp=None):
     """
     Uploads the local SQLite database to Dropbox.
     """
 
     dbx = get_dropbox_client()
     
-    # Create a timestamp string
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Use provided timestamp, else generate now
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Keep the original filename, just add timestamp at the beginning
     filename = os.path.basename(local_db_path)
@@ -149,7 +152,7 @@ def upload_db_to_dropbox(local_db_path, dropbox_folder="/uw_received_offers_trac
 class UWUploadUI(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("UW Received Offers Tracker v1.0.0")
+        self.title("UW Received Offers Tracker v1.1.0")
         self.geometry("420x420")
         self.configure(fg_color="#273946")
 
@@ -317,12 +320,28 @@ class UWUploadUI(ctk.CTk):
             self.progress.set(fraction)
 
         insert_rows(df, county, state, received_from, date_received, progress_callback)
-        self.progress.set(1.0)
+
+        # at the start of upload_file
+        central_tz = pytz.timezone("US/Central")
+        now_central = datetime.now(central_tz)
+        # for Dropbox filename (compact)
+        timestamp_for_dropbox = now_central.strftime("%Y%m%d_%H%M%S")
+
+        # for Slack message (readable)
+        timestamp_for_slack = now_central.strftime("%B %d, %Y at %H:%M:%S %Z")
+
         # --- Upload DB to Dropbox ---
         try:
-            upload_db_to_dropbox(DB_FILE, dropbox_folder="/uw_received_offers_tracker")
+            upload_db_to_dropbox(DB_FILE, dropbox_folder="/uw_received_offers_tracker", timestamp=timestamp_for_dropbox)
         except Exception as e:
             messagebox.showwarning("Dropbox Upload Failed", f"Could not upload to Dropbox:\n{e}")
+        # --- Upload DB to Slack ---
+        try:
+            send_db_to_slack(DB_FILE, county=county, state=state, timestamp=timestamp_for_slack)
+        except Exception as e:
+            messagebox.showwarning("Slack Upload Failed", f"Could not send to Slack:\n{e}")
+
+        self.progress.set(1.0)
         messagebox.showinfo("Success", "Upload complete!")
         self.progress.set(0)
         self.upload_btn.configure(state="normal")
