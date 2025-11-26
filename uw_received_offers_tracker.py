@@ -1,3 +1,14 @@
+# -------------------------ABOUT --------------------------
+
+# pyinstaller --onefile --windowed uw_received_offers_tracker.py
+# Tool: UW Received Offers Tracker Tool
+# Developer: dyoliya
+# Created: 2025-11-20
+
+# © 2025 dyoliya. All rights reserved.
+
+# ---------------------------------------------------------
+
 import os
 import sqlite3
 import pandas as pd
@@ -30,6 +41,8 @@ def create_db_if_not_exists():
             target_state TEXT NOT NULL,
             received_from TEXT NOT NULL,
             date_received TEXT NOT NULL,
+            uploaded_by TEXT NOT NULL,
+            date_uploaded TEXT NOT NULL,
             owner TEXT,
             owner_id TEXT,
             first_name TEXT,
@@ -50,7 +63,7 @@ def create_db_if_not_exists():
     conn.commit()
     conn.close()
 
-def insert_rows(df, target_county, target_state, received_from, date_received, progress_callback=None):
+def insert_rows(df, target_county, target_state, received_from, date_received, uploaded_by, date_uploaded, progress_callback=None):
     create_db_if_not_exists()
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -86,23 +99,28 @@ def insert_rows(df, target_county, target_state, received_from, date_received, p
     for idx, row in df.iterrows():
         next_id = last_id + idx + 1
         ref_no = f"UW-{year}-{next_id:07d}"
+
         target_county = target_county.upper()
         target_state = target_state.upper()
         received_from = received_from.title()
+        received_from = uploaded_by.title()
+        
         zip_code = format_zip(row.get('Zip Code'))  # <-- call inside loop per row
 
         c.execute(f"""
             INSERT OR IGNORE INTO {TABLE_NAME} (
-                ref_no, target_county, target_state, received_from, date_received,
+                ref_no, target_county, target_state, received_from, date_received, uploaded_by, date_uploaded,
                 owner, owner_id, first_name, middle_name, last_name, attn, address, city, state, zip_code,
                 num_of_interests, pdp_value, total_value_low, total_value_high, list
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             ref_no,
             target_county,
             target_state,
             received_from,
             date_received,
+            uploaded_by,
+            date_uploaded,
             row.get('Owner'),
             row.get('Owner ID'),
             row.get('First Name'),
@@ -152,8 +170,8 @@ def upload_db_to_dropbox(local_db_path, dropbox_folder="/uw_received_offers_trac
 class UWUploadUI(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("UW Received Offers Tracker v1.1.0")
-        self.geometry("420x420")
+        self.title("UW Received Offers Tracker")
+        self.geometry("420x450")
         self.configure(fg_color="#273946")
 
         # ---------------- Title ----------------
@@ -175,9 +193,16 @@ class UWUploadUI(ctk.CTk):
         row = 0
         PADDING_Y = 5
 
+        # ---------------- Uploaded By ----------------
+        ctk.CTkLabel(self.form_frame, text="Your Name:", text_color="#fff6de")\
+            .grid(row=row, column=0, sticky="w", pady=PADDING_Y, padx=(0,10))
+        self.uploader_entry = ctk.CTkEntry(self.form_frame, placeholder_text="Enter your name...")
+        self.uploader_entry.grid(row=row, column=1, sticky="we", pady=PADDING_Y)
+        row += 1
+
         # ---------------- File selection ----------------
         ctk.CTkLabel(self.form_frame, text="Select file from Underwriter:", text_color="#fff6de")\
-            .grid(row=row, column=0, sticky="e", pady=PADDING_Y, padx=(0,10))
+            .grid(row=row, column=0, sticky="w", pady=PADDING_Y, padx=(0,10))
         self.file_label = ctk.CTkLabel(self.form_frame, text="No file selected", text_color="#fff6de")
         self.file_label.grid(row=row, column=1, sticky="w", pady=PADDING_Y)
         row += 1
@@ -296,14 +321,18 @@ class UWUploadUI(ctk.CTk):
         if received_from and received_from != "Select or type...":
             self.save_underwriter(received_from)
         date_received = self.date_received_entry.get_date().strftime("%Y-%m-%d")
-
-        if not all([county, state, received_from, date_received]):
+        central_tz = pytz.timezone("US/Central")
+        now_central = datetime.now(central_tz)
+        uploaded_by = self.uploader_entry.get()
+        central_tz = pytz.timezone("US/Central")
+        date_uploaded = datetime.now(central_tz).strftime("%Y-%m-%d")
+        if not all([county, state, received_from, date_received, uploaded_by, date_uploaded]):
             messagebox.showerror("Error", "All metadata fields are required.")
             return
 
-        threading.Thread(target=self.upload_file, args=(county, state, received_from, date_received), daemon=True).start()
+        threading.Thread(target=self.upload_file, args=(county, state, received_from, date_received, uploaded_by, date_uploaded), daemon=True).start()
 
-    def upload_file(self, county, state, received_from, date_received):
+    def upload_file(self, county, state, received_from, date_received, uploaded_by, date_uploaded):
         self.upload_btn.configure(state="disabled")
         df = pd.read_excel(self.file_path)
         # Optional: ensure expected columns exist
@@ -319,7 +348,7 @@ class UWUploadUI(ctk.CTk):
         def progress_callback(fraction):
             self.progress.set(fraction)
 
-        insert_rows(df, county, state, received_from, date_received, progress_callback)
+        insert_rows(df, county, state, received_from, date_received, uploaded_by, date_uploaded, progress_callback)
 
         # at the start of upload_file
         central_tz = pytz.timezone("US/Central")
@@ -337,7 +366,7 @@ class UWUploadUI(ctk.CTk):
             messagebox.showwarning("Dropbox Upload Failed", f"Could not upload to Dropbox:\n{e}")
         # --- Upload DB to Slack ---
         try:
-            send_db_to_slack(DB_FILE, county=county, state=state, timestamp=timestamp_for_slack)
+            send_db_to_slack(DB_FILE, county=county, state=state, timestamp=timestamp_for_slack, uploaded_by=uploaded_by)
         except Exception as e:
             messagebox.showwarning("Slack Upload Failed", f"Could not send to Slack:\n{e}")
 
