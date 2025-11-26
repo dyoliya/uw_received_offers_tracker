@@ -29,3 +29,6 @@ Thumbs.db
 *.xlsx
 *.db
 tests/
+test.py
+slack_channel_ids.txt
+slack_user_ids.txt
