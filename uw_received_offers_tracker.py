@@ -159,7 +159,7 @@ def upload_db_to_dropbox(local_db_path, dropbox_folder="/uw_received_offers_trac
     # Keep the original filename, just add timestamp at the beginning
     filename = os.path.basename(local_db_path)
     timestamped_filename = f"{timestamp}_{filename}"
-    timestamped_filename="test"
+    # timestamped_filename="test" # uncomment if script will be for testing
 
     dropbox_path = os.path.join(dropbox_folder, timestamped_filename).replace("\\", "/")
 
@@ -171,7 +171,7 @@ def upload_db_to_dropbox(local_db_path, dropbox_folder="/uw_received_offers_trac
 class UWUploadUI(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("UW Received Offers Tracker v2.0.1")
+        self.title("UW Received Offers Tracker v2.0.2")
         self.geometry("420x450")
         self.configure(fg_color="#273946")
 
