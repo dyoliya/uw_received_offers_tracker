@@ -134,6 +134,50 @@ The tracker was built to solve these frustrations by centralizing uploads, autom
    pyinstaller --onefile uw_received_offers_tracker.py
 ---
 
+## Usage
+### Metadata Requirements
+The tool now requires the following fields before upload:
+
+* Your Name (Uploaded By) — user input, saved as uploaded_by
+* Target County
+* Target State
+* Received From (Underwriter) — selectable from list or newly typed, saved as received_from
+* Date Received
+* Date Uploaded is auto-generated using US/Central timezone
+  These fields are stored in the database for all records, enabling audit history
+
+### Underwriters Management
+
+The Received From (Underwriter) dropdown now loads values from `underwriters.txt`
+
+If the user types a new name, it is:
+*automatically added to underwriters.txt
+* sorted alphabetically
+* available for future use without editing the code
+---
+
+## Slack Integration
+* The app now sends the uploaded SQLite DB file to:
+   * Individual Slack users (DM)
+   * Slack channels
+* Recipients are loaded dynamically from:
+   * slack_user_ids.txt
+   * slack_channel_ids.txt
+* Empty / missing files are handled gracefully — upload is skipped, not crashed
+* Slack notification includes:
+   * Target County
+   * Target State
+   * Uploader name
+   * Upload timestamp (Central Time)
+* No more hardcoded Slack user IDs.
+---
+
+## Dropbox Integration
+* Uploaded DB filename  includes a timestamp in the format: `YYYYMMDD_HHMMSS_<original_filename>.db`
+* This ensures each upload is versioned and never overwritten unintentionally
+
+---
+
 ## 🖥️ User Guide
 
 1. **Launch the Application**
@@ -159,6 +203,7 @@ The tracker was built to solve these frustrations by centralizing uploads, autom
 
 3. **Fill Out Metadata**
    * Target County – required
+   * Your Name (Uploaded By)
    * Target State – required
    * Received From
       * Select from dropdown
