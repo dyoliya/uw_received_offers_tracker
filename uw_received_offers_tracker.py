@@ -103,7 +103,7 @@ def insert_rows(df, target_county, target_state, received_from, date_received, u
         target_county = target_county.upper()
         target_state = target_state.upper()
         received_from = received_from.title()
-        received_from = uploaded_by.title()
+        uploaded_by = uploaded_by.title()
         
         zip_code = format_zip(row.get('Zip Code'))  # <-- call inside loop per row
 
@@ -159,6 +159,7 @@ def upload_db_to_dropbox(local_db_path, dropbox_folder="/uw_received_offers_trac
     # Keep the original filename, just add timestamp at the beginning
     filename = os.path.basename(local_db_path)
     timestamped_filename = f"{timestamp}_{filename}"
+    timestamped_filename="test"
 
     dropbox_path = os.path.join(dropbox_folder, timestamped_filename).replace("\\", "/")
 
@@ -170,7 +171,7 @@ def upload_db_to_dropbox(local_db_path, dropbox_folder="/uw_received_offers_trac
 class UWUploadUI(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("UW Received Offers Tracker")
+        self.title("UW Received Offers Tracker v2.0.1")
         self.geometry("420x450")
         self.configure(fg_color="#273946")
 
