@@ -191,6 +191,7 @@ The tracker was built to solve these frustrations by centralizing uploads, autom
       * Total Value - High ($)
 
 3. **Metadata requirements**
+   
    Before uploading, the following fields must be filled:
    * Your Name (Uploaded By) — stored as `uploaded_by`
    * Target County — required for tracking, stored as `target_county`
