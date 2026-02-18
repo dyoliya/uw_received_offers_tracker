@@ -40,6 +40,70 @@ The tracker was built to solve these frustrations by centralizing uploads, autom
 - **Column Validation**: Ensures that all required Excel columns are present, preventing incomplete or invalid data uploads.
 
 ---
+## 🧠 Logic Flow
+
+1. User selects file and enters metadata
+   - User selects an Excel file received from an underwriter.
+   - User provides required tracking details:
+     - Target county
+     - Target state
+     - Underwriter name (Received from)
+     - Date received
+     - Uploaded by
+   - All metadata fields are required before upload can start.
+
+2. System validates file structure
+   - System checks that the Excel file contains required columns:
+     - Owner
+     - Owner ID
+     - First Name
+     - Last Name
+     - ATTN
+     - Address
+     - City
+     - State
+     - Zip Code
+     - \# of Interests
+     - PDP Value ($)
+     - Total Value - Low ($)
+     - Total Value - High ($)
+   - If any required column is missing, upload stops and an error message is shown.
+
+3. System standardizes and prepares data
+   - Metadata values are formatted for consistency:
+     - County and state are converted to uppercase
+     - Names are formatted to title case
+   - ZIP codes are converted to text and stored as blank if missing
+
+4. System assigns unique reference numbers
+   - Each row receives a unique reference number using this format: **UW-YYYY-#######**
+   - Numbering continues from the last record for the current year to avoid duplicates.
+
+5. System stores data in local tracker database
+   - Data is saved into the local SQLite database file: **uw_received_offers.db**
+   - Existing rows with the same reference number are ignored to prevent duplication.
+
+6. System uploads a timestamped backup to Dropbox
+   - After local save completes, the database file is uploaded to Dropbox.
+   - Filename format: **YYYYMMDD_HHMMSS_uw_received_offers.db**
+   - This creates version history for recovery and auditing.
+
+7. System sends Slack notification with database file
+   - The updated database file is sent to configured Slack users and/or channels.
+   - The message includes:
+     - County and state added
+     - Name of uploader
+     - Timestamp of upload
+
+8. System updates underwriter list
+   - If a new underwriter name is entered, the name is added to the saved underwriter list.
+   - The list is stored locally and used to populate the dropdown for future uploads.
+
+9. System shows upload result
+   - Progress bar displays upload progress.
+   - Success message appears when processing completes.
+   - If Dropbox or Slack upload fails, the database save still remains completed locally.
+---
 
 ## 📝 Requirements
 
