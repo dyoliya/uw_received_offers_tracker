@@ -32,3 +32,5 @@ tests/
 test.py
 slack_channel_ids.txt
 slack_user_ids.txt
+*.json
+last_db_backup_run_date.txt

@@ -15,19 +15,22 @@ import pandas as pd
 import tkinter as tk
 import customtkinter as ctk
 import threading
-import dropbox
 import pytz
 from datetime import datetime
 from tkinter import filedialog, simpledialog, messagebox
 from tkcalendar import DateEntry
-from config.dropbox_config import get_dropbox_client
 from upload_to_slack import send_db_to_slack
+from googleapiclient.http import MediaFileUpload
+from config.gdrive_config import get_drive_service
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
+BACKUP_MARKER_FILE = "last_db_backup_run_date.txt"
 DB_FILE = "uw_received_offers.db"
 TABLE_NAME = "uw_received_offers"
+
+GOOGLE_DRIVE_FOLDER_ID = "1I36aTRvd1QQpWm1fA_54JE2gl-kj_tz4"
 
 # ---------------- Database Functions ----------------
 def create_db_if_not_exists():
@@ -57,9 +60,19 @@ def create_db_if_not_exists():
             pdp_value REAL,
             total_value_low REAL,
             total_value_high REAL,
-            list TEXT
+            list TEXT,
+            county_of_interest TEXT
         )
     """)
+
+    # Check existing columns
+    c.execute(f"PRAGMA table_info({TABLE_NAME})")
+    existing_cols = {row[1].lower() for row in c.fetchall()}
+
+    # Auto-add new columns for older DB versions
+    if "county_of_interest" not in existing_cols:
+        c.execute(f"ALTER TABLE {TABLE_NAME} ADD COLUMN county_of_interest TEXT")
+
     conn.commit()
     conn.close()
 
@@ -105,14 +118,14 @@ def insert_rows(df, target_county, target_state, received_from, date_received, u
         received_from = received_from.title()
         uploaded_by = uploaded_by.title()
         
-        zip_code = format_zip(row.get('Zip Code'))  # <-- call inside loop per row
+        zip_code = format_zip(row.get('zip code'))  # <-- call inside loop per row
 
         c.execute(f"""
             INSERT OR IGNORE INTO {TABLE_NAME} (
                 ref_no, target_county, target_state, received_from, date_received, uploaded_by, date_uploaded,
                 owner, owner_id, first_name, middle_name, last_name, attn, address, city, state, zip_code,
-                num_of_interests, pdp_value, total_value_low, total_value_high, list
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                num_of_interests, pdp_value, total_value_low, total_value_high, list, county_of_interest
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             ref_no,
             target_county,
@@ -121,21 +134,22 @@ def insert_rows(df, target_county, target_state, received_from, date_received, u
             date_received,
             uploaded_by,
             date_uploaded,
-            row.get('Owner'),
-            row.get('Owner ID'),
-            row.get('First Name'),
-            row.get('Middle Name'),
-            row.get('Last Name'),
-            row.get('ATTN'),
-            row.get('Address'),
-            row.get('City'),
-            row.get('State'),
+            row.get('owner'),
+            row.get('owner id'),
+            row.get('first name'),
+            row.get('middle name'),
+            row.get('last name'),
+            row.get('attn'),
+            row.get('address'),
+            row.get('city'),
+            row.get('state'),
             zip_code,  # use formatted ZIP
-            row.get('# of Interests'),
-            row.get('PDP Value ($)'),
-            row.get('Total Value - Low ($)'),
-            row.get('Total Value - High ($)'),
-            row.get('List')
+            row.get('# of interests'),
+            row.get('pdp value ($)'),
+            row.get('total value - low ($)'),
+            row.get('total value - high ($)'),
+            row.get('list'),
+            row.get('county')
         ))
 
         if progress_callback:
@@ -144,28 +158,99 @@ def insert_rows(df, target_county, target_state, received_from, date_received, u
     conn.commit()
     conn.close()
 
-# ---------------- DROPBOX UPLOAD ----------------
-def upload_db_to_dropbox(local_db_path, dropbox_folder="/uw_received_offers_tracker", timestamp=None):
+# ---------------- GDRIVE UPLOAD ----------------
+def upload_db_to_gdrive(local_db_path, folder_id=GOOGLE_DRIVE_FOLDER_ID, timestamp=None):
     """
-    Uploads the local SQLite database to Dropbox.
+    Uploads the local SQLite database to Google Drive using OAuth.
     """
 
-    dbx = get_dropbox_client()
-    
-    # Use provided timestamp, else generate now
+    service = get_drive_service()
+
     if timestamp is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Keep the original filename, just add timestamp at the beginning
     filename = os.path.basename(local_db_path)
-    timestamped_filename = f"{timestamp}_{filename}"
-    # timestamped_filename="test" # uncomment if script will be for testing
+    timestamped_filename = f"{timestamp}_backup_{filename}"
 
-    dropbox_path = os.path.join(dropbox_folder, timestamped_filename).replace("\\", "/")
+    file_metadata = {
+        "name": timestamped_filename,
+        "parents": [folder_id]
+    }
 
-    with open(local_db_path, "rb") as f:
-        dbx.files_upload(f.read(), dropbox_path, mode=dropbox.files.WriteMode.overwrite)
+    media = MediaFileUpload(
+        local_db_path,
+        mimetype="application/x-sqlite3",
+        resumable=True
+    )
 
+    uploaded_file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id, name, parents"
+    ).execute()
+
+    return uploaded_file
+
+def get_today_central_date_str():
+    central_tz = pytz.timezone("US/Central")
+    now_central = datetime.now(central_tz)
+    return now_central.strftime("%Y%m%d")
+
+def get_db_snapshot_date(local_db_path):
+    """
+    Returns the DB file's last modified date in US/Central as YYYYMMDD.
+    """
+    if not os.path.exists(local_db_path):
+        return None
+
+    central_tz = pytz.timezone("US/Central")
+    modified_ts = os.path.getmtime(local_db_path)
+    modified_central = datetime.fromtimestamp(modified_ts, central_tz)
+    return modified_central.strftime("%Y%m%d")
+
+
+def read_last_backup_date():
+    """
+    Reads the last backed-up DB snapshot date from the marker file.
+    Returns None if missing/blank.
+    """
+    if not os.path.exists(BACKUP_MARKER_FILE):
+        return None
+
+    with open(BACKUP_MARKER_FILE, "r", encoding="utf-8") as f:
+        value = f.read().strip()
+        return value or None
+
+
+def write_last_backup_date(snapshot_date):
+    """
+    Writes the DB snapshot date that was successfully backed up.
+    """
+    with open(BACKUP_MARKER_FILE, "w", encoding="utf-8") as f:
+        f.write(snapshot_date)
+
+def backup_db_if_needed(local_db_path, folder_id=GOOGLE_DRIVE_FOLDER_ID):
+    """
+    Uploads at most one backup per US/Central day, before the first update of that day.
+    The uploaded filename uses the DB snapshot date, but the marker tracks the run date.
+    """
+    if not os.path.exists(local_db_path):
+        return False
+
+    today_central = get_today_central_date_str()
+    last_backup_run_date = read_last_backup_date()
+
+    # already backed up once today
+    if last_backup_run_date == today_central:
+        return False
+
+    # name the backup based on the DB snapshot date being preserved
+    snapshot_date = get_db_snapshot_date(local_db_path)
+    upload_db_to_gdrive(local_db_path, folder_id=folder_id, timestamp=snapshot_date)
+
+    # mark that today's backup has already been done
+    write_last_backup_date(today_central)
+    return True
 
 # ---------------- GUI ----------------
 class UWUploadUI(ctk.CTk):
@@ -260,7 +345,7 @@ class UWUploadUI(ctk.CTk):
                                         hover_color="#ffab4c", command=self.start_upload)
         self.upload_btn.grid(row=row, column=0, columnspan=2, sticky="we", pady=15)
 
-                # github link (hihi)
+        # github link (hihi)
         self.credit_label = ctk.CTkLabel(
         self,
         text="© dyoliya • GitHub",
@@ -336,10 +421,16 @@ class UWUploadUI(ctk.CTk):
     def upload_file(self, county, state, received_from, date_received, uploaded_by, date_uploaded):
         self.upload_btn.configure(state="disabled")
         df = pd.read_excel(self.file_path)
+
+        # Normalize column names (case-insensitive, strip spaces)
+        df.columns = [str(col).strip().lower() for col in df.columns]
         # Optional: ensure expected columns exist
-        required_cols = ['Owner','Owner ID','First Name','Last Name','ATTN','Address','City','State','Zip Code',
-                         '# of Interests','PDP Value ($)','Total Value - Low ($)','Total Value - High ($)']
-        optional_cols = ['Middle Name', 'List']
+        required_cols = [
+            'owner','owner id','first name','last name','attn','address','city','state','zip code',
+            '# of interests','pdp value ($)','total value - low ($)','total value - high ($)'
+        ]
+
+        optional_cols = ['middle name', 'list']
         missing = [c for c in required_cols if c not in df.columns]
         if missing:
             messagebox.showerror("Error", f"Missing required columns in Excel: {missing}")
@@ -349,22 +440,21 @@ class UWUploadUI(ctk.CTk):
         def progress_callback(fraction):
             self.progress.set(fraction)
 
+        # --- Backup DB once per Central day, before today's first update ---
+        try:
+            backup_db_if_needed(DB_FILE, folder_id=GOOGLE_DRIVE_FOLDER_ID)
+        except Exception as e:
+            messagebox.showwarning("Google Drive Backup Failed", f"Could not back up database to Google Drive:\n{e}")
+
         insert_rows(df, county, state, received_from, date_received, uploaded_by, date_uploaded, progress_callback)
 
         # at the start of upload_file
         central_tz = pytz.timezone("US/Central")
         now_central = datetime.now(central_tz)
-        # for Dropbox filename (compact)
-        timestamp_for_dropbox = now_central.strftime("%Y%m%d_%H%M%S")
 
         # for Slack message (readable)
         timestamp_for_slack = now_central.strftime("%B %d, %Y at %H:%M:%S %Z")
 
-        # --- Upload DB to Dropbox ---
-        try:
-            upload_db_to_dropbox(DB_FILE, dropbox_folder="/uw_received_offers_tracker", timestamp=timestamp_for_dropbox)
-        except Exception as e:
-            messagebox.showwarning("Dropbox Upload Failed", f"Could not upload to Dropbox:\n{e}")
         # --- Upload DB to Slack ---
         try:
             send_db_to_slack(DB_FILE, county=county, state=state, timestamp=timestamp_for_slack, uploaded_by=uploaded_by)
@@ -377,6 +467,5 @@ class UWUploadUI(ctk.CTk):
         self.upload_btn.configure(state="normal")
 
 if __name__ == "__main__":
-    create_db_if_not_exists()
     app = UWUploadUI()
     app.mainloop()
