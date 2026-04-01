@@ -256,7 +256,7 @@ def backup_db_if_needed(local_db_path, folder_id=GOOGLE_DRIVE_FOLDER_ID):
 class UWUploadUI(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("UW Received Offers Tracker v2.0.2")
+        self.title("UW Received Offers Tracker v2.1.0")
         self.geometry("420x450")
         self.configure(fg_color="#273946")
 
